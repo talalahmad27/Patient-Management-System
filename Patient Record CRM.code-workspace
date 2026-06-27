@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "Patient Record CRM",
+			"path": "."
+		},
+		{
+			"name": "docs",
+			"path": "docs"
+		}
+	],
+	"settings": {}
+}

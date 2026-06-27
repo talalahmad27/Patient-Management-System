@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: patient_records_db
+    environment:
+      POSTGRES_DB: patient_records
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: localpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  openfga:
+    image: openfga/openfga:latest
+    container_name: patient_records_fga
+    command: run
+    environment:
+      OPENFGA_DATASTORE_ENGINE: memory
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+
+volumes:
+  postgres_data:
