@@ -16,5 +16,8 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
+  },
+  "overrides": {
+    "@opentelemetry/semantic-conventions": "1.27.0"
   }
 }
