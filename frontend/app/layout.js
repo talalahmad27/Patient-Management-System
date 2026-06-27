@@ -1,4 +1,5 @@
 import { Auth0Provider } from '@auth0/nextjs-auth0';
+import { auth0 } from '../lib/auth0';
 import Link from 'next/link';
 import './globals.css';
 
@@ -6,7 +7,25 @@ export const metadata = {
   title: 'MediCRM',
 };
 
-export default function RootLayout({ children }) {
+async function getStaffRole() {
+  try {
+    const session = await auth0.getSession();
+    if (!session) return null;
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/staff/me`, {
+      headers: { Authorization: `Bearer ${session.tokenSet.accessToken}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.data?.role || null;
+  } catch {
+    return null;
+  }
+}
+
+export default async function RootLayout({ children }) {
+  const role = await getStaffRole();
+
   return (
     <html lang="en">
       <body className="min-h-screen bg-slate-50 font-sans">
@@ -19,9 +38,16 @@ export default function RootLayout({ children }) {
                 </div>
                 <span className="font-bold text-xl text-slate-900 tracking-tight">MediCRM</span>
               </Link>
-              <a href="/auth/logout" className="text-sm text-slate-500 hover:text-slate-800 transition-colors">
-                Logout
-              </a>
+              <div className="flex items-center gap-6">
+                {role === 'admin' && (
+                  <Link href="/admin" className="text-sm font-medium text-teal-600 hover:text-teal-800 transition-colors">
+                    Admin Portal
+                  </Link>
+                )}
+                <a href="/auth/logout" className="text-sm text-slate-500 hover:text-slate-800 transition-colors">
+                  Logout
+                </a>
+              </div>
             </div>
           </header>
           <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

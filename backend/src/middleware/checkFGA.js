@@ -7,6 +7,8 @@ const fgaClient = new OpenFgaClient({
 
 function checkFGA(relation) {
   return async (req, res, next) => {
+    if (req.user.role === 'admin') return next();
+
     try {
       const staffId = req.user.staff_id;
       const patientId = req.params.patientId;

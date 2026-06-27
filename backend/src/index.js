@@ -10,6 +10,7 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api/staff', require('./routes/staff'));
+app.use('/api/admin', require('./routes/admin'));
 app.use('/api/patients', require('./routes/patients'));
 app.use('/api/patients/:patientId/notes', require('./routes/notes'));
 
