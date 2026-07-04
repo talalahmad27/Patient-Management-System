@@ -25,6 +25,7 @@ dim_practice
 | ----------------------------- | ------------------------------------------------ |
 | `001_initial_schema.sql`      | All four tables, indexes                         |
 | `002_patient_soft_delete.sql` | Adds `is_active` column + index to `dim_patient` |
+| `003_staff_roles.sql`         | Adds `role` column to `dim_staff`; promotes seed doctor to `admin`; inserts a dummy doctor for testing |
 
 
 ---
@@ -114,13 +115,19 @@ CREATE TABLE dim_staff (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Added in migration 003
+ALTER TABLE dim_staff
+ADD COLUMN role TEXT NOT NULL DEFAULT 'doctor'
+CHECK (role IN ('admin', 'doctor', 'nurse', 'receptionist'));
 ```
 
 
 | Column            | Notes                                                                     |
 | ----------------- | ------------------------------------------------------------------------- |
 | `auth_user_id`    | The `sub` claim from the Auth0 JWT. Links a login session to a staff row. |
-| `staff_type`      | `doctor` or `admin`. CHECK constraint enforced at DB level.               |
+| `staff_type`      | `doctor` or `admin`. CHECK constraint enforced at DB level. Legacy employment category — not the same as `role`. |
+| `role`            | Added in migration 003. `admin`, `doctor`, `nurse`, or `receptionist`. Drives the DB-role access layer (`requireAdmin`, `checkFGA` admin bypass) — see `docs/architecture-decisions.md`. |
 | `provider_number` | Medicare provider number. Nullable — doctors only.                        |
 | `ahpra_number`    | AHPRA medical registration number. AU compliance.                         |
 

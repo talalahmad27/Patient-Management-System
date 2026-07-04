@@ -63,12 +63,28 @@ Auth0 handles identity. It is responsible for:
 
 ---
 
-## Authorisation — OpenFGA
+## Authorisation — Two Layers
+
+Auth0 says who you are. Two independent gates then decide what you can do:
+
+```
+Request comes in
+       ↓
+FGA: Can this user see this patient/note?  →  No  →  403
+       ↓ Yes
+DB Role: Can this role perform this action?  →  No  →  403
+       ↓ Yes
+Allow
+```
+
+Both gates must pass. Full rationale, the role → action access matrix, and
+planned evolution (owner/viewer RLS, `checkRole` middleware, staff creation
+flow) are in `docs/architecture-decisions.md`.
+
+### Layer 1 — OpenFGA (resource-level)
 
 OpenFGA handles fine-grained access control. It answers the question:
 "Is this doctor allowed to perform this action on this resource?"
-
-Auth0 says who you are. OpenFGA says what you can do.
 
 ### Authorization model
 
@@ -102,8 +118,16 @@ Two tuples are written per practice/patient:
 | `staff:<staffId> member practice:<practiceId>` | Staff onboarded to a practice |
 | `practice:<practiceId> practice patient:<patientId>` | Patient created via POST /patients |
 
-**Important:** OpenFGA uses in-memory storage locally. All tuples are lost on
-container restart and must be re-seeded. See the local dev section below.
+**Persistence:** OpenFGA runs with `OPENFGA_DATASTORE_ENGINE: postgres`,
+backed by the same Postgres container (an `openfga-migrate` service runs the
+schema migration before `openfga` starts — see `docker-compose.yml`). Store,
+model, and tuples now survive `docker compose down` / `up`. They are only
+wiped by `docker compose down -v`. See the local dev section below for the
+one-time bootstrap after a fresh volume.
+
+**Admin bypass:** `checkFGA` calls `next()` immediately, without hitting
+OpenFGA at all, when `req.user.role === 'admin'`. Admin bypass is a DB-role
+decision (layer 2), not an FGA relation.
 
 ### Check at runtime
 
@@ -124,6 +148,21 @@ Every patient/note route runs two middleware functions in sequence:
 verifyJWT → attachStaff → checkFGA('can_read')  → route handler
 verifyJWT → attachStaff → checkFGA('can_write') → route handler
 ```
+
+### Layer 2 — DB role (`dim_staff.role`)
+
+> "What can this role DO with resources they already have access to?"
+
+`role` column on `dim_staff` (migration `003_staff_roles.sql`): `admin`,
+`doctor`, `nurse`, or `receptionist`. Attached to every request as
+`req.user.role` by `attachStaff`.
+
+Currently enforced by:
+- `requireAdmin` — guards `/api/admin/*` routes, 403s any non-admin role
+- `checkFGA` — skips the OpenFGA call for `role === 'admin'`
+
+`checkRole(action)` for finer-grained action gating (delete, notes access by
+role) is planned but not yet built — see `docs/architecture-decisions.md`.
 
 ---
 
@@ -173,15 +212,16 @@ Nothing is ever hard deleted.
 | Service    | How it runs locally |
 |------------|---------------------|
 | PostgreSQL | Docker container via docker-compose |
-| OpenFGA    | Docker container via docker-compose (in-memory storage) |
+| OpenFGA    | Docker container via docker-compose (Postgres-backed storage, migrated by the `openfga-migrate` service) |
 | Backend    | `npm run dev` (nodemon — auto restart on file change) |
 | Frontend   | `npm run dev` (Next.js Turbopack hot reload) |
 | Auth0      | Same cloud tenant as production |
 
-### OpenFGA re-seed after restart
+### OpenFGA one-time bootstrap
 
-Because OpenFGA runs with `OPENFGA_DATASTORE_ENGINE: memory`, all data is
-wiped on container restart. After every `docker compose up`, run these steps:
+OpenFGA's store, model, and tuples are Postgres-backed and persist across
+`docker compose down` / `up` — this only needs to be run once against a
+fresh volume (e.g. first setup, or after `docker compose down -v`):
 
 **1. Create a new store**
 ```bash
@@ -246,7 +286,9 @@ FGA_MODEL_ID=<new modelId>
 ```
 
 New patients created via POST /patients automatically get their OpenFGA tuple
-written by the backend — no manual seeding needed for new patients.
+written by the backend — no manual seeding needed for new patients. Because
+the store is now Postgres-backed, these steps do not need to be repeated on
+every `docker compose up` — only once per volume.
 
 ### Folder structure
 
@@ -259,10 +301,12 @@ patient-records/
 │   ├── design.md
 │   ├── schema.md
 │   ├── api.md
-│   └── architecture.md
+│   ├── architecture.md
+│   └── architecture-decisions.md
 ├── migrations/
 │   ├── 001_initial_schema.sql
-│   └── 002_patient_soft_delete.sql
+│   ├── 002_patient_soft_delete.sql
+│   └── 003_staff_roles.sql
 ├── backend/
 │   ├── package.json
 │   └── src/
@@ -271,11 +315,13 @@ patient-records/
 │       ├── middleware/
 │       │   ├── verifyJWT.js
 │       │   ├── checkFGA.js
-│       │   └── attachStaff.js
+│       │   ├── attachStaff.js
+│       │   └── requireAdmin.js
 │       ├── routes/
 │       │   ├── patients.js
 │       │   ├── notes.js
-│       │   └── staff.js
+│       │   ├── staff.js
+│       │   └── admin.js
 │       ├── repositories/
 │       │   ├── patientRepository.js
 │       │   ├── noteRepository.js
@@ -290,6 +336,12 @@ patient-records/
     └── app/
         ├── layout.js
         ├── page.js                         # patient list + Add Patient button
+        ├── auth/
+        │   └── [auth0]/
+        │       └── route.js                # Auth0 v4 catch-all: login/logout/callback
+        ├── admin/
+        │   ├── page.js                     # admin portal: staff list + role stats
+        │   └── StaffList.js                # client component — staff table
         ├── api/
         │   └── patients/
         │       ├── route.js                # proxy: POST /api/patients
@@ -343,9 +395,16 @@ user has no corresponding staff record.
 #### `src/middleware/checkFGA.js`
 Factory function — call it with a relation string (`'can_read'` or
 `'can_write'`) and it returns an Express middleware. That middleware calls
-`OpenFgaClient.check()` to ask: "does `staff:<req.user.staff_id>` have
-`<relation>` on `patient:<req.params.patientId>`?" Returns 403 if not.
-This is what enforces practice-level data isolation at the access-control layer.
+`next()` immediately if `req.user.role === 'admin'` (DB-role bypass),
+otherwise calls `OpenFgaClient.check()` to ask: "does
+`staff:<req.user.staff_id>` have `<relation>` on
+`patient:<req.params.patientId>`?" Returns 403 if not. This is what enforces
+practice-level data isolation at the access-control layer.
+
+#### `src/middleware/requireAdmin.js`
+Runs after `attachStaff`. Returns 403 unless `req.user.role === 'admin'`.
+Guards every route under `/api/admin`. This is the DB-role gate — layer 2 of
+the two-layer access model (see `docs/architecture-decisions.md`).
 
 ---
 
@@ -371,6 +430,11 @@ Single route: `GET /me`. Returns the logged-in staff member's record. Used by
 the frontend to know who is logged in (name, role, practice). Does not require
 `attachStaff` middleware — it resolves the staff itself and returns it.
 
+#### `src/routes/admin.js`
+Single route: `GET /staff`, guarded by `verifyJWT`, `attachStaff`,
+`requireAdmin`. Returns every active staff member in `req.user.practice_id`
+via `staffRepository.findAllByPractice`. Used by the `/admin` frontend page.
+
 ---
 
 #### `src/repositories/patientRepository.js`
@@ -388,8 +452,10 @@ All SQL for the `patient_notes` table, plus the SCD2 logic for `dim_patient`:
 - `create` — runs a three-step transaction: close current patient version, insert new version (carrying measurements forward), insert note referencing the new `patient_dim_id`. This always runs — even if no measurements changed — so every visit produces a new timeline entry.
 
 #### `src/repositories/staffRepository.js`
-Single function: `findByAuthUserId`. Looks up a `dim_staff` row by the Auth0
-`sub` claim. Used by both `attachStaff` middleware and `GET /staff/me`.
+Two functions: `findByAuthUserId` looks up a `dim_staff` row by the Auth0
+`sub` claim, used by both `attachStaff` middleware and `GET /staff/me`.
+`findAllByPractice` returns all active staff for a practice, sorted by role
+then name, used by `GET /admin/staff`.
 
 ---
 
@@ -418,8 +484,15 @@ needs to be read server-side.
 
 #### `app/layout.js`
 Root Next.js layout. Wraps every page in `<Auth0Provider>` (required by
-`@auth0/nextjs-auth0` v4 for the client SDK to work) and renders a minimal
-top nav with the app name and a Logout link. Sets the page `<title>`.
+`@auth0/nextjs-auth0` v4 for the client SDK to work) and renders the top nav:
+app name, a conditional "Admin Portal" link (fetches `GET /api/staff/me`
+server-side and shows the link only when `role === 'admin'`), and a Logout
+link. Sets the page `<title>`.
+
+#### `app/auth/[auth0]/route.js`
+Next.js catch-all route handler required by `@auth0/nextjs-auth0` v4. Exports
+`auth0.handler` as `GET`, which internally handles `/auth/login`,
+`/auth/logout`, and `/auth/callback` based on the matched segment.
 
 ---
 
@@ -463,6 +536,20 @@ click, expands inline to show "Delete <name>?" with confirm/cancel buttons —
 no modal, no page navigation. On confirm, calls `DELETE /api/patients/:id`
 and redirects to the patient list on success. Shows an inline error message
 if the request fails.
+
+#### `app/admin/page.js`
+Server component for the admin portal (route: `/admin`). Fetches the session
+and redirects to login if missing. Calls the backend
+`GET /api/admin/staff` directly (with the bearer token attached
+server-side) — no `app/api` proxy route, since nothing calls it from client
+JS. Redirects home if the backend responds non-OK (i.e. `requireAdmin`
+rejected a non-admin staff member). Renders role stat cards (counts of
+admin/doctor/nurse/receptionist) and mounts `StaffList`.
+
+#### `app/admin/StaffList.js`
+Client component (`'use client'`). Renders the staff table: avatar with
+initials, name (+ preferred name if set), a color-coded role badge,
+specialty, and email.
 
 ---
 

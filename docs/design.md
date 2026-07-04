@@ -42,10 +42,16 @@ Doctors need a simple, structured way to:
 
 ## Users
 
-| Role    | What they can do |
-|---------|-----------------|
-| Doctor  | View and manage patients, write notes, view history |
-| Admin   | Manage practice details and staff accounts |
+| Role          | What they can do |
+|---------------|-----------------|
+| Admin         | Everything below, plus view/manage staff accounts via the admin portal. Bypasses OpenFGA checks entirely (DB-role decision). |
+| Doctor        | View and manage patients, write and read clinical notes, view history |
+| Nurse         | View and manage patients, write and read clinical notes, view history |
+| Receptionist  | View and manage patients, view history — no clinical notes access (planned; not yet enforced in code) |
+
+Roles are stored in `dim_staff.role` (migration `003_staff_roles.sql`) and are
+one of two independent access-control layers — see "Key Design Decisions"
+below and the full matrix in `docs/architecture-decisions.md`.
 
 ---
 
@@ -72,6 +78,15 @@ Auth0 handles login, password management, and JWT issuance. OpenFGA handles
 fine-grained access control — checking whether a specific doctor is permitted
 to read or write a specific patient. These are two separate concerns and are
 kept separate by design.
+
+### Two-layer access control: OpenFGA + DB role
+Resource-level access ("can this staff member see this patient?") and
+action-level permissions ("what can this role do?") are two independent
+questions, answered by two independent mechanisms: OpenFGA relationship
+tuples for the former, a `role` column on `dim_staff` for the latter. Admins
+bypass the OpenFGA layer entirely via the DB-role check rather than being
+granted blanket FGA tuples — one less place tuples need maintaining as staff
+roles change. Full rationale in `docs/architecture-decisions.md`.
 
 ### Repository pattern
 All database queries live in repository files. Route handlers never contain

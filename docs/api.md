@@ -21,8 +21,16 @@ the staff member in `dim_staff.auth_user_id`.
 
 ## Authorisation
 
-Patient endpoints additionally check OpenFGA to confirm the requesting doctor
-belongs to the practice that owns the patient. A 403 is returned if not.
+Two independent checks, both must pass:
+
+- **OpenFGA** — patient/note endpoints check the requesting staff member
+  belongs to the practice that owns the patient. A 403 is returned if not.
+  Skipped entirely for staff with `role: 'admin'`.
+- **DB role** — admin endpoints (`/api/admin/*`) check `dim_staff.role` via
+  the `requireAdmin` middleware. A 403 is returned for any non-admin role.
+
+See `docs/architecture-decisions.md` for the full two-layer model and the
+role → action access matrix.
 
 ## Response format
 
@@ -66,10 +74,44 @@ Returns the currently logged-in staff member derived from the JWT.
     "email": "alice@sunrise.com.au",
     "staff_type": "doctor",
     "specialty": "GP",
+    "role": "doctor",
     "is_active": true
   }
 }
 ```
+
+---
+
+### Admin
+
+Requires `dim_staff.role === 'admin'`. Enforced by `requireAdmin` middleware,
+which runs after `verifyJWT` + `attachStaff`.
+
+#### GET /admin/staff
+Returns all active staff members in the logged-in admin's practice, sorted
+by role then name.
+
+**Auth:** JWT required | **Role:** admin
+
+**Response 200**
+```json
+{
+  "data": [
+    {
+      "staff_id": "uuid",
+      "full_name": "Dr. Test Doctor",
+      "preferred_name": "Test",
+      "email": "test.doctor@testclinic.com",
+      "staff_type": "doctor",
+      "specialty": "GP",
+      "role": "admin",
+      "is_active": true
+    }
+  ]
+}
+```
+
+**Response 403** — logged-in staff member is not an admin
 
 ---
 
