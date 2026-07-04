@@ -31,7 +31,6 @@ export default function NoteForm({ patientId }) {
       visit_datetime: new Date().toISOString(),
       note_type:      form.get('note_type'),
       content:        form.get('content'),
-      follow_up_date: form.get('follow_up_date') || undefined,
       measurements:   Object.keys(measurements).length > 0 ? measurements : undefined,
     };
 
@@ -90,29 +89,19 @@ export default function NoteForm({ patientId }) {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Type + follow-up */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Note Type</label>
-              <select
-                name="note_type"
-                required
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all"
-              >
-                <option value="consultation">Consultation</option>
-                <option value="follow_up">Follow Up</option>
-                <option value="phone">Phone</option>
-                <option value="procedure">Procedure</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Follow-up Date</label>
-              <input
-                type="date"
-                name="follow_up_date"
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all"
-              />
-            </div>
+          {/* Type */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Note Type</label>
+            <select
+              name="note_type"
+              required
+              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all"
+            >
+              <option value="consultation">Consultation</option>
+              <option value="follow_up">Follow Up</option>
+              <option value="phone">Phone</option>
+              <option value="procedure">Procedure</option>
+            </select>
           </div>
 
           {/* Notes */}

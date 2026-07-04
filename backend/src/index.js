@@ -13,6 +13,7 @@ app.use('/api/staff', require('./routes/staff'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/patients', require('./routes/patients'));
 app.use('/api/patients/:patientId/notes', require('./routes/notes'));
+app.use('/api/appointments', require('./routes/appointments'));
 
 app.use((err, req, res, next) => {
   console.error(err);

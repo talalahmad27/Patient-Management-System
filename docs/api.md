@@ -86,6 +86,35 @@ Returns the currently logged-in staff member derived from the JWT.
 
 ---
 
+#### GET /staff
+Returns all active staff members in the logged-in staff member's practice,
+sorted by role then name. Unlike `GET /admin/staff`, this is open to every
+role — it exists so any staff member (in practice, the receptionist booking
+an appointment) can populate a picker of colleagues, not for managing staff
+accounts.
+
+**Auth:** JWT required
+
+**Response 200**
+```json
+{
+  "data": [
+    {
+      "staff_id": "uuid",
+      "full_name": "Dr. Alice Chen",
+      "preferred_name": "Alice",
+      "email": "alice@sunrise.com.au",
+      "staff_type": "doctor",
+      "specialty": "GP",
+      "role": "doctor",
+      "is_active": true
+    }
+  ]
+}
+```
+
+---
+
 ### Admin
 
 Requires `dim_staff.role === 'admin'`. Enforced by `requireAdmin` middleware,
@@ -337,8 +366,7 @@ Used to render the history timeline on the frontend.
           "note_type": "consultation",
           "content": "Weight up 2.5kg. Discussed diet. Monitor BP.",
           "visit_datetime": "2024-11-03T14:10:00Z",
-          "written_by": "Dr. Alice Chen",
-          "follow_up_date": "2025-02-01"
+          "written_by": "Dr. Alice Chen"
         }
       ]
     },
@@ -375,7 +403,6 @@ Returns all notes for a patient, newest first.
       "visit_datetime": "2024-11-03T14:10:00Z",
       "note_type": "consultation",
       "content": "Weight up 2.5kg. Discussed diet. Monitor BP.",
-      "follow_up_date": "2025-02-01",
       "written_by": {
         "staff_id": "uuid",
         "full_name": "Dr. Alice Chen"
@@ -396,7 +423,9 @@ Returns all notes for a patient, newest first.
 Creates a new note for a patient visit. Always creates a new patient version
 (SCD2) before inserting the note — regardless of whether measurements changed.
 All three writes (close old version, insert new version, insert note) happen
-in a single transaction.
+in a single transaction. Note: there is no `follow_up_date` field — follow-up
+scheduling is a real appointment booked by reception (see the Appointments
+section below), not a date on the note.
 
 **Auth:** JWT required | **Role:** admin, doctor, or nurse (not receptionist) | **FGA:** can_write patient
 
@@ -406,7 +435,6 @@ in a single transaction.
   "visit_datetime": "2024-11-03T14:10:00Z",
   "note_type": "consultation",
   "content": "Weight up 2.5kg. Discussed diet. Monitor BP.",
-  "follow_up_date": "2025-02-01",
   "measurements": {
     "weight_kg": 74.5,
     "bp_systolic": 132,
@@ -420,7 +448,6 @@ in a single transaction.
 - `visit_datetime` — required, valid datetime
 - `note_type` — required, one of: consultation, follow_up, phone, procedure
 - `content` — required, min 1 char
-- `follow_up_date` — optional, valid date, must be in the future
 - `measurements` — optional; if provided, values are carried into the new version
 
 **What happens internally**
@@ -438,8 +465,7 @@ in a single transaction.
     "patient_dim_id": "uuid",
     "visit_datetime": "2024-11-03T14:10:00Z",
     "note_type": "consultation",
-    "content": "Weight up 2.5kg. Discussed diet. Monitor BP.",
-    "follow_up_date": "2025-02-01"
+    "content": "Weight up 2.5kg. Discussed diet. Monitor BP."
   }
 }
 ```
@@ -459,7 +485,6 @@ Returns a single note with the patient snapshot at time of writing.
     "visit_datetime": "2024-11-03T14:10:00Z",
     "note_type": "consultation",
     "content": "Weight up 2.5kg. Discussed diet. Monitor BP.",
-    "follow_up_date": "2025-02-01",
     "written_by": {
       "staff_id": "uuid",
       "full_name": "Dr. Alice Chen"

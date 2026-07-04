@@ -5,6 +5,7 @@ import NoteForm from './NoteForm';
 import DeletePatientButton from './DeletePatientButton';
 import VisitHistoryItem from './VisitHistoryItem';
 import EditPatientDetails from './EditPatientDetails';
+import AppointmentsPanel from './AppointmentsPanel';
 
 async function getPatient(id, accessToken) {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/patients/${id}`, {
@@ -36,6 +37,26 @@ async function getRole(accessToken) {
   return json.data?.role || null;
 }
 
+async function getAppointments(patientId, accessToken) {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/appointments?patient_id=${patientId}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: 'no-store',
+  });
+  if (!res.ok) return [];
+  const json = await res.json();
+  return json.data;
+}
+
+async function getStaff(accessToken) {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/staff`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: 'no-store',
+  });
+  if (!res.ok) return [];
+  const json = await res.json();
+  return json.data;
+}
+
 function getInitials(name) {
   return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
 }
@@ -62,13 +83,17 @@ export default async function PatientDetailPage({ params }) {
   }
 
   const { id } = await params;
-  const [patient, history, role] = await Promise.all([
+  const [patient, history, role, appointments, staff] = await Promise.all([
     getPatient(id, accessToken),
     getHistory(id, accessToken),
     getRole(accessToken),
+    getAppointments(id, accessToken),
+    getStaff(accessToken),
   ]);
 
   const canViewClinicalData = role !== 'receptionist';
+  const canManageAppointments = role === 'admin' || role === 'receptionist';
+  const doctors = staff.filter(s => s.role !== 'receptionist');
 
   if (!patient) {
     return (
@@ -154,6 +179,13 @@ export default async function PatientDetailPage({ params }) {
               </div>
             </div>
           ))}
+
+          <AppointmentsPanel
+            patientId={patient.patient_id}
+            appointments={appointments}
+            doctors={doctors}
+            canManage={canManageAppointments}
+          />
         </div>
 
         {/* Right column: add note + visit history */}

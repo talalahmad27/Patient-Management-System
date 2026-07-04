@@ -39,6 +39,9 @@ export default async function RootLayout({ children }) {
                 <span className="font-bold text-xl text-slate-900 tracking-tight">MediCRM</span>
               </Link>
               <div className="flex items-center gap-6">
+                <Link href="/appointments" className="text-sm font-medium text-slate-600 hover:text-teal-700 transition-colors">
+                  Appointments
+                </Link>
                 {role === 'admin' && (
                   <Link href="/admin" className="text-sm font-medium text-teal-600 hover:text-teal-800 transition-colors">
                     Admin Portal

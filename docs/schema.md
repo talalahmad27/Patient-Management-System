@@ -2,7 +2,7 @@
 
 ## Overview
 
-Five tables. PostgreSQL 16.
+Six tables. PostgreSQL 16.
 
 ```
 dim_practice
@@ -15,7 +15,10 @@ dim_practice
               │                      (patient_id     → stable natural key)
               │                      (written_by     → dim_staff)
               │
-              └── patient_access_log (patient_id → stable natural key)
+              ├── patient_access_log (patient_id → stable natural key)
+              │                      (staff_id    → dim_staff)
+              │
+              └── dim_appointment    (patient_id → stable natural key)
                                      (staff_id    → dim_staff)
 ```
 
@@ -31,6 +34,7 @@ dim_practice
 | `003_staff_roles.sql`         | Adds `role` column to `dim_staff`; promotes seed doctor to `admin`; inserts a dummy doctor for testing |
 | `004_patient_access_log.sql`  | Adds `patient_access_log` table — records every chart view for the "last checked by" indicator |
 | `005_dummy_receptionist.sql`  | Widens `dim_staff.staff_type` CHECK to include `nurse`/`receptionist` (previously only `doctor`/`admin`, predating the `role` column); inserts a dummy receptionist for testing |
+| `006_appointments.sql`        | Drops `patient_notes.follow_up_date` (superseded by real appointments); adds `dim_appointment` table + indexes |
 
 
 ---
@@ -235,7 +239,6 @@ CREATE TABLE patient_notes (
   note_type       TEXT        NOT NULL DEFAULT 'consultation'
                   CHECK (note_type IN ('consultation', 'follow_up', 'phone', 'procedure')),
   content         TEXT        NOT NULL,
-  follow_up_date  DATE,
 
   -- Future attachment placeholder
   s3_object_id    TEXT,
@@ -270,6 +273,9 @@ CREATE INDEX idx_notes_practice
 | `content`        | Free text in v1. Future: add `soap JSONB` column alongside this.          |
 | `is_deleted`     | Soft delete only. Medical notes are never hard deleted.                   |
 
+`follow_up_date` was dropped in migration 006 — follow-up scheduling is now a
+real `dim_appointment` row booked by reception, not a date field the doctor
+sets while writing a note.
 
 ---
 
@@ -304,16 +310,60 @@ CREATE INDEX idx_access_log_patient
 
 ---
 
+### dim_appointment
+
+Booked appointments — reception schedules a patient with a doctor/nurse at a
+specific date and time. Added in migration 006, replacing the old
+`patient_notes.follow_up_date` field.
+
+```sql
+CREATE TABLE dim_appointment (
+  appointment_id    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id        UUID        NOT NULL,
+  staff_id          UUID        NOT NULL REFERENCES dim_staff(staff_id),
+  practice_id       UUID        NOT NULL REFERENCES dim_practice(practice_id),
+  scheduled_start   TIMESTAMPTZ NOT NULL,
+  duration_minutes  INT         NOT NULL DEFAULT 30,
+  status            TEXT        NOT NULL DEFAULT 'scheduled'
+                    CHECK (status IN ('scheduled', 'cancelled')),
+  appointment_type  TEXT        NOT NULL DEFAULT 'consultation'
+                    CHECK (appointment_type IN ('consultation', 'follow_up', 'phone', 'procedure')),
+  reason            TEXT,
+  created_by        UUID        NOT NULL REFERENCES dim_staff(staff_id),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_appointment_practice_day
+  ON dim_appointment (practice_id, scheduled_start);
+
+CREATE INDEX idx_appointment_patient
+  ON dim_appointment (patient_id, scheduled_start DESC);
+```
+
+
+| Column            | Notes                                                                     |
+| ----------------- | -------------------------------------------------------------------------- |
+| `patient_id`      | Stable natural key, same denormalised pattern as `patient_notes.patient_id` — no FK, since `patient_id` isn't unique across all `dim_patient` version rows. |
+| `scheduled_start` | Date **and** time in one `TIMESTAMPTZ` (mirrors `patient_notes.visit_datetime`) — a day can hold multiple appointments. |
+| `status`          | `scheduled` or `cancelled` only, v1. No `completed`/`no_show`/check-in state yet — deliberately deferred, see `docs/architecture-decisions.md`. |
+| `created_by`      | The staff member who booked it — currently always a `receptionist`, enforced at the API layer (`checkRole('receptionist')`), not by a DB constraint. |
+
+Cancelling is a soft update (`status = 'cancelled'`), not a row deletion —
+consistent with the rest of the schema never hard-deleting anything.
+
+---
+
 ## Soft Delete Rules
 
 
-| Table           | Mechanism           | What it hides                               |
-| --------------- | ------------------- | ------------------------------------------- |
-| `dim_patient`   | `is_active = false` | Patient hidden from all list/detail queries |
-| `patient_notes` | `is_deleted = true` | Note hidden from all read queries           |
+| Table            | Mechanism              | What it hides                               |
+| ---------------- | ---------------------- | -------------------------------------------- |
+| `dim_patient`    | `is_active = false`    | Patient hidden from all list/detail queries |
+| `patient_notes`  | `is_deleted = true`    | Note hidden from all read queries           |
+| `dim_appointment`| `status = 'cancelled'` | Appointment excluded from the day view      |
 
 
-Neither table ever has rows physically removed.
+Nothing in this schema is ever hard deleted.
 
 ---
 
@@ -359,8 +409,8 @@ RETURNING patient_dim_id;
 
 -- 3. Insert note against the new patient_dim_id
 INSERT INTO patient_notes (patient_dim_id, patient_id, written_by,
-  practice_id, visit_datetime, note_type, content, follow_up_date)
-VALUES ($new_dim_id, $1, $doctor_id, $2, now(), $type, $content, $follow_up);
+  practice_id, visit_datetime, note_type, content)
+VALUES ($new_dim_id, $1, $doctor_id, $2, now(), $type, $content);
 
 COMMIT;
 ```

@@ -252,13 +252,47 @@ EHRs actually behave:
 - **Billing/Medicare assistance** — naturally receptionist-facing once the
   Medicare billing integration (`design.md` future consideration) exists;
   `dim_staff.provider_number` is already stored, ready for that later.
-- **Appointment scheduling & check-in — new epic, in scope** (decided
-  2026-07-04). Biggest single gap for this role: there's no appointment
-  concept anywhere in the schema today, and real front-desk work is
-  dominated by booking/rescheduling/check-in. This is a bigger scope than
-  the rest of this list — needs its own design pass (new `dim_appointment`
-  table, booking/reschedule/check-in UI, receptionist-facing calendar view)
-  rather than being fully specified here.
+- **Appointment scheduling — built 2026-07-04.** `dim_appointment` table,
+  `/appointments` day-view calendar, booking/cancel/reschedule (reschedule =
+  create new + cancel old, not an edit-in-place — keeps history), clash
+  detection (409 if the same provider already has an overlapping `scheduled`
+  appointment). Booking/cancelling gated to `admin`/`receptionist`
+  (`checkRole`); viewing is open to everyone. `patient_notes.follow_up_date`
+  was dropped in favor of this. Also added: patient-card "Upcoming
+  Appointments" panel with its own reschedule/cancel, and `GET /api/staff`
+  (open, practice-wide) to populate the doctor picker.
+
+### Next up — check-in status + payment ledger (brainstormed 2026-07-05, not yet built)
+
+- **`dim_appointment.status`** expands from `scheduled`/`cancelled` to also
+  include `checked_in`, `completed`, `no_show`. Lifecycle:
+  `scheduled → checked_in → completed`, with `cancelled`/`no_show` as side
+  exits. Checking in is `admin`/`receptionist` only, same gate as booking.
+- **New `dim_payment` table** — manual ledger only, no payment gateway/card
+  processing (explicitly out of scope, would be its own epic):
+  ```
+  dim_payment
+    payment_id, appointment_id (FK), patient_id (denormalised), practice_id
+    amount, payment_method (cash/card/medicare/other)
+    recorded_by (staff_id), paid_at, notes
+  ```
+- **Linkage: `appointment_id`, one-to-many** — a payment anchors to the
+  specific visit/check-in it's for, not just the patient in the abstract.
+  One-to-many so partial payments (deposit + balance) or a refund are just
+  additional rows, never an edit to an existing one — same
+  never-mutate/never-hard-delete philosophy as the rest of this schema.
+  `patient_id`/`practice_id` denormalised onto the row too, same pattern as
+  `patient_notes.patient_id` — so "all payments for this patient" or a
+  practice-wide takings report don't need to join through the appointment.
+- **Open gap**: no fee/price schedule exists anywhere (what a consultation
+  vs. follow-up costs), so `amount` is just freely typed by reception at
+  payment time in v1 — no auto-calculated totals. A `appointment_type` →
+  price table would be a separate later addition if real invoicing is
+  wanted.
+- **Docs to touch when this is built** (not done yet, noted so the next
+  session doesn't have to rediscover it): `schema.md` (new table + migration
+  entry), `api.md` (new endpoints), `design.md` (Users/Future Considerations
+  — billing line already there, just needs a "built" pointer once done).
 
 ---
 

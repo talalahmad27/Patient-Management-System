@@ -69,11 +69,6 @@ export default function VisitHistoryItem({ version, isFirst }) {
                         <span>{new Date(note.visit_datetime).toLocaleDateString('en-AU')}</span>
                       </div>
                       <p className="text-sm text-slate-700 leading-relaxed">{note.content}</p>
-                      {note.follow_up_date && (
-                        <p className="mt-2 text-xs text-emerald-600 font-medium">
-                          Follow-up: {note.follow_up_date}
-                        </p>
-                      )}
                     </div>
                   </div>
                 ))}

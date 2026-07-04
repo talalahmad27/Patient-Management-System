@@ -58,8 +58,7 @@ async function findHistory(patientId) {
              'note_type',     n.note_type,
              'content',       n.content,
              'visit_datetime',n.visit_datetime,
-             'written_by',    s.full_name,
-             'follow_up_date',to_char(n.follow_up_date, 'DD/MM/YYYY')
+             'written_by',    s.full_name
            ) ORDER BY n.visit_datetime DESC
          ) FILTER (WHERE n.note_id IS NOT NULL),
          '[]'

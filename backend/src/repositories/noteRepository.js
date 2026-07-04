@@ -4,7 +4,7 @@ async function findAllByPatient(patientId) {
   const { rows } = await pool.query(
     `SELECT
        n.note_id, n.patient_dim_id, n.visit_datetime, n.note_type,
-       n.content, to_char(n.follow_up_date, 'DD/MM/YYYY') AS follow_up_date,
+       n.content,
        json_build_object(
          'staff_id', s.staff_id,
          'full_name', s.full_name
@@ -27,7 +27,7 @@ async function findAllByPatient(patientId) {
 async function findById(noteId) {
   const { rows } = await pool.query(
     `SELECT
-       n.note_id, n.visit_datetime, n.note_type, n.content, to_char(n.follow_up_date, 'DD/MM/YYYY') AS follow_up_date,
+       n.note_id, n.visit_datetime, n.note_type, n.content,
        json_build_object(
          'staff_id', s.staff_id,
          'full_name', s.full_name
@@ -51,7 +51,7 @@ async function findById(noteId) {
 }
 
 async function create(patientId, staffId, practiceId, data) {
-  const { visit_datetime, note_type, content, follow_up_date, measurements } = data;
+  const { visit_datetime, note_type, content, measurements } = data;
   const client = await pool.connect();
 
   try {
@@ -109,12 +109,12 @@ async function create(patientId, staffId, practiceId, data) {
     const { rows: noteRows } = await client.query(
       `INSERT INTO patient_notes
          (patient_dim_id, patient_id, written_by, practice_id,
-          visit_datetime, note_type, content, follow_up_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING note_id, patient_dim_id, visit_datetime, note_type, content, to_char(follow_up_date, 'DD/MM/YYYY') AS follow_up_date`,
+          visit_datetime, note_type, content)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING note_id, patient_dim_id, visit_datetime, note_type, content`,
       [
         patientDimId, patientId, staffId, practiceId,
-        visit_datetime, note_type, content, follow_up_date || null,
+        visit_datetime, note_type, content,
       ]
     );
 
