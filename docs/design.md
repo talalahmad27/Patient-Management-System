@@ -47,7 +47,7 @@ Doctors need a simple, structured way to:
 | Admin         | Everything below, plus view/manage staff accounts via the admin portal. Bypasses OpenFGA checks entirely (DB-role decision). |
 | Doctor        | View and manage patients, write and read clinical notes, view history |
 | Nurse         | View and manage patients, write and read clinical notes, view history |
-| Receptionist  | View and manage patients, view history — no clinical notes access (planned; not yet enforced in code) |
+| Receptionist  | View and manage patients (including editing demographics), create patients — no clinical notes, no visit history, no patient deletion (enforced via `checkRole` as of 2026-07-04) |
 
 Roles are stored in `dim_staff.role` (migration `003_staff_roles.sql`) and are
 one of two independent access-control layers — see "Key Design Decisions"
@@ -130,3 +130,11 @@ This is both a compliance requirement and a safety net.
 - Patient transfer between practices
 - Referral letter generation from note content
 - Full-text search across notes
+- AI-assisted visit history summary — local Ollama engine (PHI stays
+  in-infrastructure, no third-party BAA needed), regenerated only when notes
+  are updated (not per view), always labeled "AI Assisted Summary" in the UI.
+  See `docs/architecture-decisions.md` roadmap item 5.
+- Appointment scheduling and check-in — new `dim_appointment` concept,
+  booking/reschedule/check-in UI, receptionist-facing calendar view. Decided
+  in scope 2026-07-04; needs its own design pass. See
+  `docs/architecture-decisions.md` roadmap item 6.

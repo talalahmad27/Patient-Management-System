@@ -160,9 +160,14 @@ verifyJWT → attachStaff → checkFGA('can_write') → route handler
 Currently enforced by:
 - `requireAdmin` — guards `/api/admin/*` routes, 403s any non-admin role
 - `checkFGA` — skips the OpenFGA call for `role === 'admin'`
+- `checkRole(...allowedRoles)` — generic role gate. `checkRole('admin',
+  'doctor', 'nurse')` guards notes (GET/POST), visit history, and patient
+  deletion — blocks `receptionist` specifically. Runs before `checkFGA` in
+  the middleware chain (cheap in-memory check fails fast before the OpenFGA
+  network call).
 
-`checkRole(action)` for finer-grained action gating (delete, notes access by
-role) is planned but not yet built — see `docs/architecture-decisions.md`.
+Nurse-specific action gating (e.g. hiding delete) is still open — see
+`docs/architecture-decisions.md`.
 
 ---
 
@@ -306,7 +311,9 @@ patient-records/
 ├── migrations/
 │   ├── 001_initial_schema.sql
 │   ├── 002_patient_soft_delete.sql
-│   └── 003_staff_roles.sql
+│   ├── 003_staff_roles.sql
+│   ├── 004_patient_access_log.sql
+│   └── 005_dummy_receptionist.sql
 ├── backend/
 │   ├── package.json
 │   └── src/
@@ -316,7 +323,8 @@ patient-records/
 │       │   ├── verifyJWT.js
 │       │   ├── checkFGA.js
 │       │   ├── attachStaff.js
-│       │   └── requireAdmin.js
+│       │   ├── requireAdmin.js
+│       │   └── checkRole.js
 │       ├── routes/
 │       │   ├── patients.js
 │       │   ├── notes.js
@@ -346,7 +354,7 @@ patient-records/
         │   └── patients/
         │       ├── route.js                # proxy: POST /api/patients
         │       └── [patientId]/
-        │           ├── route.js            # proxy: DELETE /api/patients/:id
+        │           ├── route.js            # proxy: DELETE, PATCH /api/patients/:id
         │           └── notes/
         │               └── route.js        # proxy: POST /api/patients/:id/notes
         └── patients/
@@ -354,8 +362,10 @@ patient-records/
             │   ├── page.js                 # new patient page (auth guard)
             │   └── NewPatientForm.js       # client form component
             └── [id]/
-                ├── page.js                 # patient detail + history timeline
+                ├── page.js                 # patient detail + role-gated sections
                 ├── NoteForm.js             # client component — add visit note
+                ├── VisitHistoryItem.js     # client component — collapsible visit row
+                ├── EditPatientDetails.js   # client component — edit demographics
                 └── DeletePatientButton.js  # client component — soft delete
 ```
 
@@ -406,21 +416,38 @@ Runs after `attachStaff`. Returns 403 unless `req.user.role === 'admin'`.
 Guards every route under `/api/admin`. This is the DB-role gate — layer 2 of
 the two-layer access model (see `docs/architecture-decisions.md`).
 
+#### `src/middleware/checkRole.js`
+Factory function — call it with any number of allowed role strings,
+`checkRole('admin', 'doctor', 'nurse')`, and it returns an Express middleware
+that 403s unless `req.user.role` is in that list. More general than
+`requireAdmin` (which only ever checks for `'admin'`); used to gate notes,
+visit history, and patient deletion against the `receptionist` role. Placed
+before `checkFGA` in the middleware chain since it's a cheap in-memory check
+that should fail fast ahead of the OpenFGA network call.
+
 ---
 
 #### `src/routes/patients.js`
-Five routes for patient CRUD:
+Six routes for patient CRUD:
 - `GET /` — list all active patients for the staff member's practice (paginated, searchable)
-- `GET /:patientId` — current patient version
+- `GET /:patientId` — current patient version. Also looks up the previous
+  `patient_access_log` entry (before logging this view) and returns it as
+  `last_accessed_by`, then logs the current view.
+- `PATCH /:patientId` — updates demographics (full_name, date_of_birth, sex,
+  phone, email) on the current row via `patientRepository.updateDemographics`.
+  No SCD2 version, no measurements — open to every role, including
+  receptionist, since it's not gated by `checkRole`.
 - `POST /` — create patient, then write the OpenFGA `practice → patient` tuple so the new patient is immediately accessible
-- `DELETE /:patientId` — soft delete (`is_active = false`) via `patientRepository.deactivate`
-- `GET /:patientId/history` — all SCD2 versions with their notes, used for the timeline view
+- `DELETE /:patientId` — soft delete (`is_active = false`) via `patientRepository.deactivate`. Gated by `checkRole('admin', 'doctor', 'nurse')` — receptionist gets 403.
+- `GET /:patientId/history` — all SCD2 versions with their notes, used for the timeline view. Also gated by `checkRole('admin', 'doctor', 'nurse')`.
 
 Also owns a local `OpenFgaClient` instance for writing tuples on patient creation.
 
 #### `src/routes/notes.js`
 Three routes, all nested under `/api/patients/:patientId/notes` (Express
-`mergeParams: true` so `:patientId` is visible):
+`mergeParams: true` so `:patientId` is visible), all gated by
+`checkRole('admin', 'doctor', 'nurse')` — receptionist can't read or write
+clinical notes:
 - `GET /` — all non-deleted notes for a patient, newest first
 - `GET /:noteId` — single note with patient snapshot at time of writing
 - `POST /` — validate with Zod, then call `noteRepository.create` which runs the SCD2 transaction
@@ -438,12 +465,15 @@ via `staffRepository.findAllByPractice`. Used by the `/admin` frontend page.
 ---
 
 #### `src/repositories/patientRepository.js`
-All SQL for the `dim_patient` table:
+All SQL for the `dim_patient` table, plus the access log:
 - `findAllByPractice` — paginated list filtered by `practice_id`, `is_current = true`, `is_active = true`
 - `findById` — current version of a single patient
 - `findHistory` — all SCD2 version rows for a patient, with notes aggregated via `json_agg`
 - `create` — inserts a new patient row with a generated `patient_id` UUID
 - `deactivate` — sets `is_active = false` on all rows for a given `patient_id` + `practice_id`
+- `findLastAccess` — most recent `patient_access_log` row for a patient (joined to `dim_staff` for the name), or `null` if never viewed
+- `logAccess` — inserts a new `patient_access_log` row for the current viewer
+- `updateDemographics` — updates `full_name`/`date_of_birth`/`sex`/`phone`/`email` via `COALESCE` (only provided fields change) on the `is_current = true` row only — no new SCD2 version, no measurements touched
 
 #### `src/repositories/noteRepository.js`
 All SQL for the `patient_notes` table, plus the SCD2 logic for `dim_patient`:
@@ -460,10 +490,14 @@ then name, used by `GET /admin/staff`.
 ---
 
 #### `src/validators/patientValidator.js`
-Zod schema for `POST /patients` request bodies. Required fields: `full_name`
-(min 2 chars), `date_of_birth` (valid past date). Optional fields: `sex`
-(enum), `phone`, `email`, `height_cm`, `weight_kg`, `bp_systolic`,
-`bp_diastolic` with numeric range checks. Exported as `createPatientSchema`.
+`createPatientSchema` (`POST /patients`) — required: `full_name` (min 2
+chars), `birth_year` (int, transformed into `date_of_birth` as Jan 1 of that
+year). Optional: `sex` (enum), `phone`, `email`, `height_cm`, `weight_kg`,
+`bp_systolic`, `bp_diastolic` with numeric range checks.
+`updatePatientSchema` (`PATCH /patients/:id`) — same demographic fields
+(`full_name`, `birth_year`, `sex`, `phone`, `email`), all optional, `.refine`
+requires at least one. No measurement fields — this schema is demographics
+only, deliberately excluding clinical data so it can stay open to every role.
 
 #### `src/validators/noteValidator.js`
 Zod schema for `POST /patients/:id/notes` request bodies. Required fields:
@@ -517,11 +551,15 @@ the new patient's detail page on success.
 
 #### `app/patients/[id]/page.js`
 Server component for the patient detail page (route: `/patients/:id`). Fetches
-session, then makes two parallel requests — `GET /api/patients/:id` (current
-record) and `GET /api/patients/:id/history` (all versions with notes). Renders
-the current measurements in stat cards, mounts `NoteForm` and
-`DeletePatientButton`, then renders the full SCD2 history as a vertical
-timeline with one card per visit.
+session, then makes three parallel requests — `GET /api/patients/:id` (current
+record), `GET /api/patients/:id/history` (all versions with notes), and
+`GET /api/staff/me` (viewer's role). Renders the current measurements in stat
+cards, a "Last checked by <name> · <relative time>" line under the patient
+name when `last_accessed_by` is present, and always mounts
+`EditPatientDetails`. When `role === 'receptionist'`, `NoteForm` and
+`DeletePatientButton` are omitted and the Visit History section renders a
+"visible to clinical staff only" message instead of the timeline; every other
+role sees the full SCD2 history as a vertical timeline of `VisitHistoryItem`s.
 
 #### `app/patients/[id]/NoteForm.js`
 Client component (`'use client'`). An expandable "Add Note" form on the patient
@@ -530,12 +568,25 @@ note type, content, optional follow-up date, and optional updated measurements.
 Calls the Next.js proxy `POST /api/patients/:id/notes`. Closes and refreshes
 the page via `router.refresh()` on success.
 
+#### `app/patients/[id]/VisitHistoryItem.js`
+Client component (`'use client'`). One row per SCD2 version in the timeline.
+Collapsed by default — shows just the visit date, a note-count badge, and (for
+the current version) a "Latest Patient Visit" badge. Click toggles a chevron
+and expands to reveal the measurements row and full note content underneath.
+
+#### `app/patients/[id]/EditPatientDetails.js`
+Client component (`'use client'`). Expandable "Edit Details" form (full_name,
+birth_year, sex, phone, email), pre-filled from the current patient record.
+Calls the Next.js proxy `PATCH /api/patients/:id`, then `router.refresh()`.
+Mounted for every role — it's the endpoint that gives the `receptionist`
+role a way to fix demographic details without clinical write access.
+
 #### `app/patients/[id]/DeletePatientButton.js`
 Client component (`'use client'`). Renders a "Delete Patient" button. On first
 click, expands inline to show "Delete <name>?" with confirm/cancel buttons —
 no modal, no page navigation. On confirm, calls `DELETE /api/patients/:id`
 and redirects to the patient list on success. Shows an inline error message
-if the request fails.
+if the request fails. Not rendered at all for `role === 'receptionist'`.
 
 #### `app/admin/page.js`
 Server component for the admin portal (route: `/admin`). Fetches the session
@@ -562,8 +613,10 @@ because the browser cannot hold the access token — the proxy adds it safely
 on the server.
 
 #### `app/api/patients/[patientId]/route.js`
-Next.js API route — proxy for `DELETE /api/patients/:patientId`. Same pattern:
-reads session, adds auth header, forwards to backend. Returns 204 on success.
+Next.js API route — proxy for `DELETE /api/patients/:patientId` (returns 204
+on success) and `PATCH /api/patients/:patientId` (returns the updated
+patient JSON or the backend's error response unchanged). Same pattern for
+both: reads session, adds auth header, forwards to backend.
 
 #### `app/api/patients/[patientId]/notes/route.js`
 Next.js API route — proxy for `POST /api/patients/:patientId/notes`. Reads

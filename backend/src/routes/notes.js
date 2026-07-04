@@ -3,11 +3,12 @@ const router = express.Router({ mergeParams: true });
 const verifyJWT = require('../middleware/verifyJWT');
 const attachStaff = require('../middleware/attachStaff');
 const checkFGA = require('../middleware/checkFGA');
+const checkRole = require('../middleware/checkRole');
 const noteRepository = require('../repositories/noteRepository');
 const { createNoteSchema } = require('../validators/noteValidator');
 
 // GET /api/patients/:patientId/notes
-router.get('/', verifyJWT, attachStaff, checkFGA('can_read'), async (req, res, next) => {
+router.get('/', verifyJWT, attachStaff, checkRole('admin', 'doctor', 'nurse'), checkFGA('can_read'), async (req, res, next) => {
   try {
     const notes = await noteRepository.findAllByPatient(req.params.patientId);
     res.json({ data: notes });
@@ -17,7 +18,7 @@ router.get('/', verifyJWT, attachStaff, checkFGA('can_read'), async (req, res, n
 });
 
 // GET /api/patients/:patientId/notes/:noteId
-router.get('/:noteId', verifyJWT, attachStaff, checkFGA('can_read'), async (req, res, next) => {
+router.get('/:noteId', verifyJWT, attachStaff, checkRole('admin', 'doctor', 'nurse'), checkFGA('can_read'), async (req, res, next) => {
   try {
     const note = await noteRepository.findById(req.params.noteId);
 
@@ -32,7 +33,7 @@ router.get('/:noteId', verifyJWT, attachStaff, checkFGA('can_read'), async (req,
 });
 
 // POST /api/patients/:patientId/notes
-router.post('/', verifyJWT, attachStaff, checkFGA('can_write'), async (req, res, next) => {
+router.post('/', verifyJWT, attachStaff, checkRole('admin', 'doctor', 'nurse'), checkFGA('can_write'), async (req, res, next) => {
   try {
     const result = createNoteSchema.safeParse(req.body);
     if (!result.success) {

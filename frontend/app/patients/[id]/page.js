@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import NoteForm from './NoteForm';
 import DeletePatientButton from './DeletePatientButton';
+import VisitHistoryItem from './VisitHistoryItem';
+import EditPatientDetails from './EditPatientDetails';
 
 async function getPatient(id, accessToken) {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/patients/${id}`, {
@@ -24,8 +26,29 @@ async function getHistory(id, accessToken) {
   return json.data;
 }
 
+async function getRole(accessToken) {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/staff/me`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: 'no-store',
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.data?.role || null;
+}
+
 function getInitials(name) {
   return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+}
+
+function formatRelativeTime(isoString) {
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const diffMins = Math.round(diffMs / 60000);
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins} min ago`;
+  const diffHours = Math.round(diffMins / 60);
+  if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 }
 
 export default async function PatientDetailPage({ params }) {
@@ -39,10 +62,13 @@ export default async function PatientDetailPage({ params }) {
   }
 
   const { id } = await params;
-  const [patient, history] = await Promise.all([
+  const [patient, history, role] = await Promise.all([
     getPatient(id, accessToken),
     getHistory(id, accessToken),
+    getRole(accessToken),
   ]);
+
+  const canViewClinicalData = role !== 'receptionist';
 
   if (!patient) {
     return (
@@ -91,10 +117,19 @@ export default async function PatientDetailPage({ params }) {
               {patient.phone && <span>{patient.phone}</span>}
               {patient.email && <span className="truncate">{patient.email}</span>}
             </div>
+            {patient.last_accessed_by && (
+              <p className="mt-2 text-xs text-slate-400">
+                Last checked by <span className="font-medium text-slate-500">{patient.last_accessed_by.full_name}</span>
+                {' '}· {formatRelativeTime(patient.last_accessed_by.accessed_at)}
+              </p>
+            )}
           </div>
 
-          <div className="shrink-0">
-            <DeletePatientButton patientId={patient.patient_id} patientName={patient.full_name} />
+          <div className="shrink-0 flex items-center gap-2">
+            <EditPatientDetails patient={patient} />
+            {canViewClinicalData && (
+              <DeletePatientButton patientId={patient.patient_id} patientName={patient.full_name} />
+            )}
           </div>
         </div>
       </div>
@@ -123,7 +158,7 @@ export default async function PatientDetailPage({ params }) {
 
         {/* Right column: add note + visit history */}
         <div className="lg:col-span-2 space-y-6">
-          <NoteForm patientId={id} />
+          {canViewClinicalData && <NoteForm patientId={id} />}
 
           <div>
             <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2 mb-4">
@@ -133,70 +168,19 @@ export default async function PatientDetailPage({ params }) {
               Visit History
             </h3>
 
-            {history.length === 0 ? (
+            {!canViewClinicalData ? (
+              <div className="text-center py-10 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-500">
+                Clinical visit history is visible to clinical staff only.
+              </div>
+            ) : history.length === 0 ? (
               <div className="text-center py-10 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-500">
                 No visits recorded yet.
               </div>
             ) : (
               <div className="bg-white rounded-2xl p-6 md:p-8 border border-slate-200 shadow-sm">
-                <div className="relative border-l-2 border-slate-200 ml-4 space-y-8 pb-2">
+                <div className="relative border-l-2 border-slate-200 ml-4 space-y-4 pb-2">
                   {history.map((version, i) => (
-                    <div key={version.patient_dim_id} className="relative pl-8">
-                      {/* Timeline dot */}
-                      <div className={`absolute -left-[9px] top-1.5 w-4 h-4 rounded-full bg-white border-2 shadow-sm ${i === 0 ? 'border-teal-500' : 'border-slate-300'}`} />
-
-                      <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-                        {/* Header row */}
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-                          <div className="flex items-center gap-1.5 text-sm text-slate-500 font-medium bg-slate-100 px-2.5 py-1 rounded-md w-fit">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                            </svg>
-                            {new Date(version.effective_from).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}
-                          </div>
-                          {version.is_current && (
-                            <span className="text-xs bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full font-semibold w-fit">
-                              Current
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Measurements row */}
-                        <div className="flex flex-wrap gap-4 text-sm text-slate-600 mb-4">
-                          <span>Weight: <strong className="text-slate-800">{version.weight_kg ?? '—'} kg</strong></span>
-                          <span>BP: <strong className="text-slate-800">{version.bp_systolic ? `${version.bp_systolic}/${version.bp_diastolic}` : '—'}</strong></span>
-                          <span>Height: <strong className="text-slate-800">{version.height_cm ?? '—'} cm</strong></span>
-                        </div>
-
-                        {/* Notes */}
-                        {version.notes && version.notes.length > 0 && (
-                          <div className="space-y-3">
-                            {version.notes.map(note => (
-                              <div key={note.note_id} className="bg-slate-50 rounded-lg p-3.5 border border-slate-100 flex gap-3 items-start">
-                                <svg className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                </svg>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 text-xs text-slate-500 mb-1.5">
-                                    <span className="font-semibold text-slate-700 capitalize">{note.note_type}</span>
-                                    <span className="text-slate-300">·</span>
-                                    <span>{note.written_by}</span>
-                                    <span className="text-slate-300">·</span>
-                                    <span>{new Date(note.visit_datetime).toLocaleDateString('en-AU')}</span>
-                                  </div>
-                                  <p className="text-sm text-slate-700 leading-relaxed">{note.content}</p>
-                                  {note.follow_up_date && (
-                                    <p className="mt-2 text-xs text-emerald-600 font-medium">
-                                      Follow-up: {note.follow_up_date}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                    <VisitHistoryItem key={version.patient_dim_id} version={version} isFirst={i === 0} />
                   ))}
                 </div>
               </div>

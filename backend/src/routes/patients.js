@@ -4,8 +4,9 @@ const { OpenFgaClient } = require('@openfga/sdk');
 const verifyJWT = require('../middleware/verifyJWT');
 const attachStaff = require('../middleware/attachStaff');
 const checkFGA = require('../middleware/checkFGA');
+const checkRole = require('../middleware/checkRole');
 const patientRepository = require('../repositories/patientRepository');
-const { createPatientSchema } = require('../validators/patientValidator');
+const { createPatientSchema, updatePatientSchema } = require('../validators/patientValidator');
 
 const fgaClient = new OpenFgaClient({
   apiUrl: process.env.FGA_API_URL,
@@ -42,14 +43,17 @@ router.get('/:patientId', verifyJWT, attachStaff, checkFGA('can_read'), async (r
       return res.status(404).json({ error: 'Patient not found' });
     }
 
-    res.json({ data: patient });
+    const lastAccessedBy = await patientRepository.findLastAccess(req.params.patientId);
+    await patientRepository.logAccess(req.params.patientId, req.user.staff_id, req.user.practice_id);
+
+    res.json({ data: { ...patient, last_accessed_by: lastAccessedBy } });
   } catch (err) {
     next(err);
   }
 });
 
 // GET /api/patients/:patientId/history
-router.get('/:patientId/history', verifyJWT, attachStaff, checkFGA('can_read'), async (req, res, next) => {
+router.get('/:patientId/history', verifyJWT, attachStaff, checkRole('admin', 'doctor', 'nurse'), checkFGA('can_read'), async (req, res, next) => {
   try {
     const history = await patientRepository.findHistory(req.params.patientId);
     res.json({ data: history });
@@ -88,8 +92,32 @@ router.post('/', verifyJWT, attachStaff, async (req, res, next) => {
   }
 });
 
+// PATCH /api/patients/:patientId
+router.patch('/:patientId', verifyJWT, attachStaff, checkFGA('can_write'), async (req, res, next) => {
+  try {
+    const result = updatePatientSchema.safeParse(req.body);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error.errors });
+    }
+
+    const patient = await patientRepository.updateDemographics(
+      req.params.patientId,
+      req.user.practice_id,
+      result.data
+    );
+
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    res.json({ data: patient });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /api/patients/:patientId
-router.delete('/:patientId', verifyJWT, attachStaff, checkFGA('can_write'), async (req, res, next) => {
+router.delete('/:patientId', verifyJWT, attachStaff, checkRole('admin', 'doctor', 'nurse'), checkFGA('can_write'), async (req, res, next) => {
   try {
     const deleted = await patientRepository.deactivate(
       req.params.patientId,

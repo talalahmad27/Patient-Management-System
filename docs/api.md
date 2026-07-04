@@ -26,8 +26,12 @@ Two independent checks, both must pass:
 - **OpenFGA** — patient/note endpoints check the requesting staff member
   belongs to the practice that owns the patient. A 403 is returned if not.
   Skipped entirely for staff with `role: 'admin'`.
-- **DB role** — admin endpoints (`/api/admin/*`) check `dim_staff.role` via
-  the `requireAdmin` middleware. A 403 is returned for any non-admin role.
+- **DB role** — checked via two middlewares. `requireAdmin` gates
+  `/api/admin/*` routes (admin only). `checkRole(...allowedRoles)` gates
+  specific patient/note actions by role — currently used to block the
+  `receptionist` role from clinical notes, visit history, and patient
+  deletion (`checkRole('admin', 'doctor', 'nurse')`). Both return 403 if the
+  role check fails.
 
 See `docs/architecture-decisions.md` for the full two-layer model and the
 role → action access matrix.
@@ -156,6 +160,11 @@ Returns all active, current patient records for the logged-in doctor's practice.
 #### GET /patients/:patientId
 Returns the current version of a patient record.
 
+Also records this view in `patient_access_log` (who + when), and returns who
+had last checked the chart *before* this view (`null` if nobody has viewed it
+yet). The lookup happens before the new row is inserted, so the response
+always reflects the previous viewer, not the current one.
+
 **Auth:** JWT required | **FGA:** can_read patient
 
 **Response 200**
@@ -175,7 +184,12 @@ Returns the current version of a patient record.
     "bp_systolic": 132,
     "bp_diastolic": 85,
     "effective_from": "2024-11-03T14:10:00Z",
-    "created_at": "2024-01-10T09:00:00Z"
+    "created_at": "2024-01-10T09:00:00Z",
+    "last_accessed_by": {
+      "staff_id": "uuid",
+      "full_name": "Dr. Alice Chen",
+      "accessed_at": "2024-11-03T12:05:00Z"
+    }
   }
 }
 ```
@@ -235,16 +249,65 @@ practice:<practiceId>  practice  patient:<newPatientId>
 
 ---
 
+#### PATCH /patients/:patientId
+Updates a patient's demographic details — `full_name`, `birth_year`, `sex`,
+`phone`, `email`. Updates the current `dim_patient` row directly (no SCD2
+version, no measurements, no notes touched — this isn't a clinical visit).
+Open to every role, including `receptionist` — this is the endpoint that
+lets front-desk staff fix a patient's contact details once they're blocked
+from the clinical note flow below.
+
+**Auth:** JWT required | **FGA:** can_write patient
+
+**Request body** (all fields optional, at least one required)
+```json
+{
+  "full_name": "Jane Smith",
+  "birth_year": 1985,
+  "sex": "female",
+  "phone": "0400 111 222",
+  "email": "jane@example.com"
+}
+```
+
+**Response 200**
+```json
+{
+  "data": {
+    "patient_dim_id": "uuid",
+    "patient_id": "uuid",
+    "full_name": "Jane Smith",
+    "birth_year": 1985,
+    "age": 41,
+    "sex": "female",
+    "phone": "0400 111 222",
+    "email": "jane@example.com",
+    "height_cm": 168.0,
+    "weight_kg": 74.5,
+    "bp_systolic": 132,
+    "bp_diastolic": 85,
+    "effective_from": "2024-11-03T14:10:00Z",
+    "created_at": "2024-01-10T09:00:00Z"
+  }
+}
+```
+
+**Response 400** — no fields provided, or a field fails validation  
+**Response 403** — doctor does not belong to this patient's practice  
+**Response 404** — patient not found
+
+---
+
 #### DELETE /patients/:patientId
 Soft-deletes a patient by setting `is_active = false` on all their `dim_patient`
 rows. The patient disappears from the list and detail views immediately.
 No data is physically removed — the full SCD2 history and all notes are
 preserved in the database.
 
-**Auth:** JWT required | **FGA:** can_write patient
+**Auth:** JWT required | **Role:** admin, doctor, or nurse (not receptionist) | **FGA:** can_write patient
 
 **Response 204** — no body  
-**Response 403** — doctor does not belong to this patient's practice  
+**Response 403** — doctor does not belong to this patient's practice, or role is `receptionist`  
 **Response 404** — patient not found
 
 ---
@@ -253,7 +316,7 @@ preserved in the database.
 Returns all versions of the patient — every visit with its measurements and notes.
 Used to render the history timeline on the frontend.
 
-**Auth:** JWT required | **FGA:** can_read patient
+**Auth:** JWT required | **Role:** admin, doctor, or nurse (not receptionist) | **FGA:** can_read patient
 
 **Response 200**
 ```json
@@ -300,7 +363,7 @@ Used to render the history timeline on the frontend.
 #### GET /patients/:patientId/notes
 Returns all notes for a patient, newest first.
 
-**Auth:** JWT required | **FGA:** can_read patient
+**Auth:** JWT required | **Role:** admin, doctor, or nurse (not receptionist) | **FGA:** can_read patient
 
 **Response 200**
 ```json
@@ -335,7 +398,7 @@ Creates a new note for a patient visit. Always creates a new patient version
 All three writes (close old version, insert new version, insert note) happen
 in a single transaction.
 
-**Auth:** JWT required | **FGA:** can_write patient
+**Auth:** JWT required | **Role:** admin, doctor, or nurse (not receptionist) | **FGA:** can_write patient
 
 **Request body**
 ```json
@@ -386,7 +449,7 @@ in a single transaction.
 #### GET /patients/:patientId/notes/:noteId
 Returns a single note with the patient snapshot at time of writing.
 
-**Auth:** JWT required | **FGA:** can_read patient
+**Auth:** JWT required | **Role:** admin, doctor, or nurse (not receptionist) | **FGA:** can_read patient
 
 **Response 200**
 ```json

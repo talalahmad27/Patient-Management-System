@@ -2,7 +2,7 @@
 
 ## Overview
 
-Four tables. PostgreSQL 16.
+Five tables. PostgreSQL 16.
 
 ```
 dim_practice
@@ -11,9 +11,12 @@ dim_practice
     │
     └── dim_patient        (practice_id → dim_practice)  ← SCD Type 2
               │
-              └── patient_notes  (patient_dim_id → dim_patient)
-                                 (patient_id     → stable natural key)
-                                 (written_by     → dim_staff)
+              ├── patient_notes      (patient_dim_id → dim_patient)
+              │                      (patient_id     → stable natural key)
+              │                      (written_by     → dim_staff)
+              │
+              └── patient_access_log (patient_id → stable natural key)
+                                     (staff_id    → dim_staff)
 ```
 
 ---
@@ -26,6 +29,8 @@ dim_practice
 | `001_initial_schema.sql`      | All four tables, indexes                         |
 | `002_patient_soft_delete.sql` | Adds `is_active` column + index to `dim_patient` |
 | `003_staff_roles.sql`         | Adds `role` column to `dim_staff`; promotes seed doctor to `admin`; inserts a dummy doctor for testing |
+| `004_patient_access_log.sql`  | Adds `patient_access_log` table — records every chart view for the "last checked by" indicator |
+| `005_dummy_receptionist.sql`  | Widens `dim_staff.staff_type` CHECK to include `nurse`/`receptionist` (previously only `doctor`/`admin`, predating the `role` column); inserts a dummy receptionist for testing |
 
 
 ---
@@ -126,7 +131,7 @@ CHECK (role IN ('admin', 'doctor', 'nurse', 'receptionist'));
 | Column            | Notes                                                                     |
 | ----------------- | ------------------------------------------------------------------------- |
 | `auth_user_id`    | The `sub` claim from the Auth0 JWT. Links a login session to a staff row. |
-| `staff_type`      | `doctor` or `admin`. CHECK constraint enforced at DB level. Legacy employment category — not the same as `role`. |
+| `staff_type`      | `doctor`, `admin`, `nurse`, or `receptionist` (widened in migration 005 to match `role` — originally only allowed `doctor`/`admin`). CHECK constraint enforced at DB level. Legacy employment category — not the same as `role`. |
 | `role`            | Added in migration 003. `admin`, `doctor`, `nurse`, or `receptionist`. Drives the DB-role access layer (`requireAdmin`, `checkFGA` admin bypass) — see `docs/architecture-decisions.md`. |
 | `provider_number` | Medicare provider number. Nullable — doctors only.                        |
 | `ahpra_number`    | AHPRA medical registration number. AU compliance.                         |
@@ -264,6 +269,37 @@ CREATE INDEX idx_notes_practice
 | `note_type`      | CHECK constraint — valid values enforced at DB level.                     |
 | `content`        | Free text in v1. Future: add `soap JSONB` column alongside this.          |
 | `is_deleted`     | Soft delete only. Medical notes are never hard deleted.                   |
+
+
+---
+
+### patient_access_log
+
+Append-only log of every time a staff member opens a patient's chart
+(`GET /api/patients/:id`). Backs the "last checked by" indicator on the
+patient detail page, and doubles as the audit trail for the practice-wide
+read access model (see `docs/architecture-decisions.md` — access is broad
+within a practice, so this log is the compliance/visibility mechanism rather
+than a per-patient ACL).
+
+```sql
+CREATE TABLE patient_access_log (
+  access_id    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id   UUID        NOT NULL,
+  staff_id     UUID        NOT NULL REFERENCES dim_staff(staff_id),
+  practice_id  UUID        NOT NULL REFERENCES dim_practice(practice_id),
+  accessed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_access_log_patient
+  ON patient_access_log (patient_id, accessed_at DESC);
+```
+
+
+| Column        | Notes                                                                     |
+| ------------- | -------------------------------------------------------------------------- |
+| `patient_id`  | Stable natural key, not `patient_dim_id` — logging a view of the person's chart, not one specific SCD2 version. No FK (same denormalised pattern as `patient_notes.patient_id`; `patient_id` isn't unique across all `dim_patient` rows so it can't back a FK). |
+| `accessed_at` | One row per view — never updated or deleted. Query "last checked by" with `ORDER BY accessed_at DESC LIMIT 1`. |
 
 
 ---

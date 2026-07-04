@@ -95,6 +95,27 @@ async function create(practiceId, staffId, data) {
   return rows[0];
 }
 
+async function updateDemographics(patientId, practiceId, data) {
+  const { full_name, date_of_birth, sex, phone, email } = data;
+
+  const { rows } = await pool.query(
+    `UPDATE dim_patient
+     SET full_name     = COALESCE($1, full_name),
+         date_of_birth = COALESCE($2, date_of_birth),
+         sex           = COALESCE($3, sex),
+         phone         = COALESCE($4, phone),
+         email         = COALESCE($5, email)
+     WHERE patient_id = $6 AND practice_id = $7 AND is_current = true
+     RETURNING patient_dim_id, patient_id, practice_id, full_name,
+               EXTRACT(YEAR FROM date_of_birth)::int AS birth_year,
+               EXTRACT(YEAR FROM AGE(date_of_birth))::int AS age,
+               sex, phone, email, height_cm, weight_kg, bp_systolic, bp_diastolic,
+               effective_from, created_at`,
+    [full_name || null, date_of_birth || null, sex || null, phone || null, email || null, patientId, practiceId]
+  );
+  return rows[0] || null;
+}
+
 async function deactivate(patientId, practiceId) {
   const { rowCount } = await pool.query(
     `UPDATE dim_patient
@@ -105,4 +126,25 @@ async function deactivate(patientId, practiceId) {
   return rowCount > 0;
 }
 
-module.exports = { findAllByPractice, findById, findHistory, create, deactivate };
+async function findLastAccess(patientId) {
+  const { rows } = await pool.query(
+    `SELECT s.staff_id, s.full_name, a.accessed_at
+     FROM patient_access_log a
+     JOIN dim_staff s ON s.staff_id = a.staff_id
+     WHERE a.patient_id = $1
+     ORDER BY a.accessed_at DESC
+     LIMIT 1`,
+    [patientId]
+  );
+  return rows[0] || null;
+}
+
+async function logAccess(patientId, staffId, practiceId) {
+  await pool.query(
+    `INSERT INTO patient_access_log (patient_id, staff_id, practice_id)
+     VALUES ($1, $2, $3)`,
+    [patientId, staffId, practiceId]
+  );
+}
+
+module.exports = { findAllByPractice, findById, findHistory, create, deactivate, findLastAccess, logAccess, updateDemographics };

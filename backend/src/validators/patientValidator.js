@@ -17,4 +17,17 @@ const createPatientSchema = z.object({
   date_of_birth: `${data.birth_year}-01-01`,
 }));
 
-module.exports = { createPatientSchema };
+const updatePatientSchema = z.object({
+  full_name:  z.string().min(2).optional(),
+  birth_year: z.number().int().min(1900).max(currentYear).optional(),
+  sex:        z.enum(['male', 'female', 'other']).optional(),
+  phone:      z.string().optional(),
+  email:      z.string().email().optional(),
+}).refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field is required',
+}).transform(({ birth_year, ...rest }) => ({
+  ...rest,
+  ...(birth_year ? { date_of_birth: `${birth_year}-01-01` } : {}),
+}));
+
+module.exports = { createPatientSchema, updatePatientSchema };
