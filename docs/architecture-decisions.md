@@ -430,5 +430,11 @@ rm -rf frontend/.next
 1. Brainstorm Nurse role improvements, then Admin
 2. **Patient assignment UI** — admin assigns doctors/nurses to a patient (now just a UI/workflow feature, no FGA tuple writes needed since access stays practice-wide)
 3. **Create staff flow** — Auth0 Management API + DB insert + FGA tuple (needs Auth0 M2M app set up first)
-4. **Appointment scheduling & check-in** — new epic, needs its own design pass (schema, booking/reschedule/check-in UI, receptionist-facing calendar view)
+4. ~~Appointment scheduling & check-in~~ — booking/cancel/reschedule built
+   2026-07-04 (see roadmap item 6); check-in status + payment ledger still
+   open, see "Next up" section above
 5. Manually verify the receptionist role in the browser (log in as `auth0|dummy-receptionist-001` or equivalent, confirm notes/history/delete are hidden and demographics editing works)
+6. **AI integration — patient history summary** (see roadmap item 5 above:
+   local Ollama, not a cloud API; generated once per note update; always
+   tagged "AI Assisted Summary"; open question on model quality + production
+   hosting since Fargate has no GPU) — brainstormed, not yet built
