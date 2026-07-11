@@ -1,6 +1,5 @@
 import { auth0 } from '../../lib/auth0';
 import { redirect } from 'next/navigation';
-import Link from 'next/link';
 import StaffList from './StaffList';
 
 async function getStaff(accessToken) {
@@ -37,12 +36,6 @@ export default async function AdminPage() {
     <div className="pb-12">
       {/* Header */}
       <div className="mb-8">
-        <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-teal-600 transition-colors mb-3">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Back to Patients
-        </Link>
         <h1 className="text-2xl md:text-3xl font-bold text-slate-900 tracking-tight">Admin Portal</h1>
         <p className="text-slate-500 mt-1">Manage your clinic staff and settings</p>
       </div>

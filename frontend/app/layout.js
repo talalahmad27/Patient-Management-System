@@ -1,6 +1,7 @@
 import { Auth0Provider } from '@auth0/nextjs-auth0';
 import { auth0 } from '../lib/auth0';
 import Link from 'next/link';
+import NavTabs from './NavTabs';
 import './globals.css';
 
 export const metadata = {
@@ -38,19 +39,7 @@ export default async function RootLayout({ children }) {
                 </div>
                 <span className="font-bold text-xl text-slate-900 tracking-tight">MediCRM</span>
               </Link>
-              <div className="flex items-center gap-6">
-                <Link href="/appointments" className="text-sm font-medium text-slate-600 hover:text-teal-700 transition-colors">
-                  Appointments
-                </Link>
-                {role === 'admin' && (
-                  <Link href="/admin" className="text-sm font-medium text-teal-600 hover:text-teal-800 transition-colors">
-                    Admin Portal
-                  </Link>
-                )}
-                <a href="/auth/logout" className="text-sm text-slate-500 hover:text-slate-800 transition-colors">
-                  Logout
-                </a>
-              </div>
+              <NavTabs role={role} />
             </div>
           </header>
           <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
