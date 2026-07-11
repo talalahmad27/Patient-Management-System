@@ -262,12 +262,66 @@ EHRs actually behave:
   Appointments" panel with its own reschedule/cancel, and `GET /api/staff`
   (open, practice-wide) to populate the doctor picker.
 
-### Next up — check-in status + payment ledger (brainstormed 2026-07-05, not yet built)
+### Next up — check-in status + payment ledger
 
-- **`dim_appointment.status`** expands from `scheduled`/`cancelled` to also
-  include `checked_in`, `completed`, `no_show`. Lifecycle:
-  `scheduled → checked_in → completed`, with `cancelled`/`no_show` as side
-  exits. Checking in is `admin`/`receptionist` only, same gate as booking.
+**Status — built 2026-07-11.** Reframed after research + a brainstorm: leading
+EHRs (Epic/athenahealth/PCC) run a full `scheduled → arrived/checked-in →
+roomed → completed` lifecycle, but that's all live *waiting-room coordination*
+across multiple physical stations. This app doesn't want a waiting-room
+concept, and the only real driver here is billing — "a visit that actually
+happened becomes payable." So `checked_in` was **dropped**; the lifecycle is
+just:
+
+```
+scheduled ──▶ completed   (billable — only status a payment can link to)
+         ├──▶ no_show      (kept: honest counterpart to completed, feeds no-show stats)
+         └──▶ cancelled    (already existed, via DELETE)
+```
+
+Migration `007_appointment_status.sql` widens the CHECK to the four values.
+Rules (enforced in repo/route, not the DB):
+- **`completed`/`no_show`**: admin + receptionist, only from `scheduled`, only
+  once `scheduled_start <= now()` (both outcomes are retrospective).
+- **Correcting a finalised appointment**: admin only (`correctStatus`), and
+  still can't mark a *future* appointment completed.
+- `PATCH /api/appointments/:id/status` (`markOutcome`/`correctStatus`);
+  frontend `AppointmentStatus.js` on the day view (outcome buttons once the
+  slot has passed, outcome badge after, admin-only "Edit" to flip
+  completed↔no_show). Not yet verified in a running browser (stack wasn't up
+  this session).
+
+**Notes tied to appointments — designed 2026-07-11, not built.** This
+**reintroduces `checked_in`** (dropped above) for a concrete reason: the
+*doctor* writes the clinical note during the visit, but the *receptionist*
+marks the appointment `completed` later at checkout — so notes can't depend on
+`completed` existing yet, or they'd have nowhere to save. Revised lifecycle:
+
+```
+scheduled ──▶ checked_in ──▶ completed   ← visit + notes appear in history
+     │            └── doctor writes notes here (saved, tied to appt, hidden
+     │                until completed)
+     ├──▶ no_show
+     └──▶ cancelled  (also allowed from checked_in)
+```
+
+Decisions:
+- **Check-in** (`scheduled → checked_in`): admin + receptionist. Unlocks
+  note-writing for the visit. No start-time gate (patients arrive early).
+- **`patient_notes.appointment_id`** — new nullable FK. A note may attach only
+  to a `checked_in` or `completed` appointment (never a bare `scheduled` one);
+  when linked, `visit_datetime = appointment.scheduled_start` (the real visit
+  time, not when it was typed). Nullable so ad-hoc/phone notes still work.
+- **Multiple notes per appointment** (one-to-many, no unique constraint).
+- **Visit History becomes appointment-driven**: one entry per *completed*
+  appointment (time = `scheduled_start`, its measurements snapshot, its notes)
+  **plus** any unlinked notes (existing data / phone consults) — nothing
+  already recorded disappears. `checked_in`-only visits stay hidden until
+  completed. This is a rearchitecture of the current SCD2-version-keyed
+  timeline (needed because SCD2 makes a new version per note, which would split
+  one visit's multiple notes into separate rows).
+- Ties into `dim_payment` below: `completed` is the single state where an
+  appointment becomes a real encounter — documentable *and* billable.
+
 - **New `dim_payment` table** — manual ledger only, no payment gateway/card
   processing (explicitly out of scope, would be its own epic):
   ```

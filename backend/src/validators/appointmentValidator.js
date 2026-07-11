@@ -9,4 +9,8 @@ const createAppointmentSchema = z.object({
   reason:            z.string().optional(),
 });
 
-module.exports = { createAppointmentSchema };
+const updateStatusSchema = z.object({
+  status: z.enum(['scheduled', 'completed', 'no_show', 'cancelled']),
+});
+
+module.exports = { createAppointmentSchema, updateStatusSchema };

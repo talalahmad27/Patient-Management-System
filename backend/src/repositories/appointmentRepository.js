@@ -70,7 +70,11 @@ async function findByDay(practiceId, date) {
   return rows;
 }
 
-async function findUpcomingByPatient(patientId, practiceId) {
+// Open (still 'scheduled') appointments for a patient — both upcoming and any
+// that are past-due but haven't been given an outcome yet, so reception can
+// still complete / no-show them from the patient tab. Finalised appointments
+// (completed / no_show / cancelled) drop off.
+async function findOpenByPatient(patientId, practiceId) {
   const { rows } = await pool.query(
     `SELECT
        a.appointment_id, a.patient_id, a.staff_id, a.scheduled_start,
@@ -79,7 +83,7 @@ async function findUpcomingByPatient(patientId, practiceId) {
      FROM dim_appointment a
      JOIN dim_staff s ON s.staff_id = a.staff_id
      WHERE a.patient_id = $1 AND a.practice_id = $2
-       AND a.status = 'scheduled' AND a.scheduled_start >= now()
+       AND a.status = 'scheduled'
      ORDER BY a.scheduled_start ASC`,
     [patientId, practiceId]
   );
@@ -97,4 +101,47 @@ async function cancel(appointmentId, practiceId) {
   return rows[0] || null;
 }
 
-module.exports = { create, findByDay, findUpcomingByPatient, cancel, findClash };
+async function findById(appointmentId, practiceId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM dim_appointment WHERE appointment_id = $1 AND practice_id = $2`,
+    [appointmentId, practiceId]
+  );
+  return rows[0] || null;
+}
+
+// Forward outcome from a scheduled appointment (admin + receptionist).
+// status is 'completed' or 'no_show'. Guard mirrors cancel(): the transition
+// only fires from 'scheduled', and only once the start time has passed — both
+// outcomes are retrospective, you can't complete or no-show a future slot.
+async function markOutcome(appointmentId, practiceId, status) {
+  const { rows } = await pool.query(
+    `UPDATE dim_appointment
+     SET status = $3
+     WHERE appointment_id = $1 AND practice_id = $2
+       AND status = 'scheduled'
+       AND scheduled_start <= now()
+     RETURNING *`,
+    [appointmentId, practiceId, status]
+  );
+  return rows[0] || null;
+}
+
+// Admin-only correction of an already-finalised appointment. Permissive on the
+// source status (that's the point of a correction), but still refuses to mark a
+// future appointment 'completed' — nonsensical regardless of role.
+async function correctStatus(appointmentId, practiceId, status) {
+  const { rows } = await pool.query(
+    `UPDATE dim_appointment
+     SET status = $3
+     WHERE appointment_id = $1 AND practice_id = $2
+       AND ($3 <> 'completed' OR scheduled_start <= now())
+     RETURNING *`,
+    [appointmentId, practiceId, status]
+  );
+  return rows[0] || null;
+}
+
+module.exports = {
+  create, findByDay, findOpenByPatient, cancel, findClash,
+  findById, markOutcome, correctStatus,
+};
