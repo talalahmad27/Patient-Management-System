@@ -43,7 +43,7 @@ router.get('/:patientId', verifyJWT, attachStaff, checkFGA('can_read'), async (r
       return res.status(404).json({ error: 'Patient not found' });
     }
 
-    const lastAccessedBy = await patientRepository.findLastAccess(req.params.patientId);
+    const lastAccessedBy = await patientRepository.findLastAccess(req.params.patientId, req.user.staff_id);
     await patientRepository.logAccess(req.params.patientId, req.user.staff_id, req.user.practice_id);
 
     res.json({ data: { ...patient, last_accessed_by: lastAccessedBy } });

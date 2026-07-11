@@ -125,23 +125,36 @@ async function deactivate(patientId, practiceId) {
   return rowCount > 0;
 }
 
-async function findLastAccess(patientId) {
+// Most recent chart view by someone *other than* the current viewer, so a
+// staff member always sees who checked the chart before them — never their own
+// view. This also keeps a self-triggered reload (e.g. after editing
+// demographics) from flipping "last checked by" to show yourself.
+async function findLastAccess(patientId, excludeStaffId) {
   const { rows } = await pool.query(
     `SELECT s.staff_id, s.full_name, a.accessed_at
      FROM patient_access_log a
      JOIN dim_staff s ON s.staff_id = a.staff_id
-     WHERE a.patient_id = $1
+     WHERE a.patient_id = $1 AND a.staff_id <> $2
      ORDER BY a.accessed_at DESC
      LIMIT 1`,
-    [patientId]
+    [patientId, excludeStaffId]
   );
   return rows[0] || null;
 }
 
+// Skip logging when this staff member is already the most recent viewer, so a
+// reload (e.g. router.refresh() after a demographics edit) doesn't add a
+// redundant self-access row. A genuine view by a different person still logs.
 async function logAccess(patientId, staffId, practiceId) {
   await pool.query(
     `INSERT INTO patient_access_log (patient_id, staff_id, practice_id)
-     VALUES ($1, $2, $3)`,
+     SELECT $1, $2, $3
+     WHERE (
+       SELECT l.staff_id FROM patient_access_log l
+       WHERE l.patient_id = $1
+       ORDER BY l.accessed_at DESC
+       LIMIT 1
+     ) IS DISTINCT FROM $2`,
     [patientId, staffId, practiceId]
   );
 }
