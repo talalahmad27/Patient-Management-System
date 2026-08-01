@@ -1,0 +1,61 @@
+# =============================================================================
+# .dockerignore — applies to any build with the repo root as context.
+# Reduces build context size and prevents secrets/junk from leaking into images.
+# =============================================================================
+
+# --- Secrets (MUST never end up in an image) ---------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.cert
+*.crt
+*.jks
+*.keystore
+secrets.json
+secrets.yaml
+secrets.yml
+credentials.json
+service-account*.json
+auth.json
+token.json
+.auth0
+
+# --- Dependencies (installed fresh inside the image) -------------------------
+**/node_modules
+
+# --- Build output (regenerated inside the image) -----------------------------
+**/.next
+**/dist
+**/build
+**/out
+
+# --- VCS ---------------------------------------------------------------------
+.git
+.gitignore
+.gitattributes
+
+# --- Local dev / tooling -----------------------------------------------------
+.claude
+.vscode
+.idea
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# --- Docs (not needed at runtime) --------------------------------------------
+docs
+README.md
+*.md
+
+# --- Frontend (backend image doesn't need it; separate image handles it) -----
+frontend
+
+# --- Scratchpad and misc -----------------------------------------------------
+scratchpad
+tmp
+temp

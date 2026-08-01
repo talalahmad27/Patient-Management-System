@@ -1,0 +1,97 @@
+{
+  "schema_version": "1.1",
+  "type_definitions": [
+    {
+      "type": "staff",
+      "relations": {},
+      "metadata": {
+        "relations": {},
+        "module": "",
+        "source_info": null
+      }
+    },
+    {
+      "type": "practice",
+      "relations": {
+        "member": {
+          "this": {}
+        }
+      },
+      "metadata": {
+        "relations": {
+          "member": {
+            "directly_related_user_types": [
+              {
+                "type": "staff",
+                "condition": ""
+              }
+            ],
+            "module": "",
+            "source_info": null
+          }
+        },
+        "module": "",
+        "source_info": null
+      }
+    },
+    {
+      "type": "patient",
+      "relations": {
+        "can_read": {
+          "tupleToUserset": {
+            "tupleset": {
+              "object": "",
+              "relation": "practice"
+            },
+            "computedUserset": {
+              "object": "",
+              "relation": "member"
+            }
+          }
+        },
+        "can_write": {
+          "tupleToUserset": {
+            "tupleset": {
+              "object": "",
+              "relation": "practice"
+            },
+            "computedUserset": {
+              "object": "",
+              "relation": "member"
+            }
+          }
+        },
+        "practice": {
+          "this": {}
+        }
+      },
+      "metadata": {
+        "relations": {
+          "can_read": {
+            "directly_related_user_types": [],
+            "module": "",
+            "source_info": null
+          },
+          "can_write": {
+            "directly_related_user_types": [],
+            "module": "",
+            "source_info": null
+          },
+          "practice": {
+            "directly_related_user_types": [
+              {
+                "type": "practice",
+                "condition": ""
+              }
+            ],
+            "module": "",
+            "source_info": null
+          }
+        },
+        "module": "",
+        "source_info": null
+      }
+    }
+  ],
+  "conditions": {}
+}

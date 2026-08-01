@@ -1,0 +1,135 @@
+# Production-mode stack: all four services in containers.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up --build -d
+#
+# Builds backend and frontend images, starts Postgres + OpenFGA + backend +
+# frontend. Migrations and FGA bootstrap run as init containers before the
+# backend starts serving traffic.
+#
+# The ONLY published port is 3000 (frontend). Everything else talks over
+# Docker's internal network.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: patient_records_db_prod
+    environment:
+      POSTGRES_DB: patient_records
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: localpassword
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_user -d patient_records"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  openfga-migrate:
+    image: openfga/openfga:latest
+    command: migrate
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: postgres://app_user:localpassword@postgres:5432/patient_records?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  openfga:
+    image: openfga/openfga:latest
+    container_name: patient_records_fga_prod
+    command: run
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: postgres://app_user:localpassword@postgres:5432/patient_records?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      openfga-migrate:
+        condition: service_completed_successfully
+
+  # Runs pending SQL migrations then exits. Backend waits for this.
+  db-migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["node", "scripts/migrate.js", "apply"]
+    environment:
+      DATABASE_URL: postgresql://app_user:localpassword@postgres:5432/patient_records
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Waits for OpenFGA HTTP to be ready, then verifies/creates the FGA store + model.
+  fga-bootstrap:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "Waiting for OpenFGA to be ready..."
+        until wget -q --spider http://openfga:8080/healthz 2>/dev/null; do
+          sleep 2
+        done
+        echo "OpenFGA is ready."
+        node scripts/fga-bootstrap.js
+    environment:
+      FGA_API_URL: http://openfga:8080
+      FGA_STORE_ID: ${FGA_STORE_ID}
+      FGA_MODEL_ID: ${FGA_MODEL_ID}
+    depends_on:
+      openfga:
+        condition: service_started
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: patient_records_backend_prod
+    environment:
+      DATABASE_URL: postgresql://app_user:localpassword@postgres:5432/patient_records
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE}
+      FGA_API_URL: http://openfga:8080
+      FGA_STORE_ID: ${FGA_STORE_ID}
+      FGA_MODEL_ID: ${FGA_MODEL_ID}
+      NODE_ENV: production
+      PORT: 3001
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      fga-bootstrap:
+        condition: service_completed_successfully
+      openfga:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://backend:3001
+    container_name: patient_records_frontend_prod
+    environment:
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN}
+      AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID}
+      AUTH0_CLIENT_SECRET: ${AUTH0_CLIENT_SECRET}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE}
+      AUTH0_SECRET: ${AUTH0_SECRET:-replace_me_with_a_real_secret}
+      APP_BASE_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
