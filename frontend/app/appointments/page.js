@@ -53,7 +53,8 @@ function generateSlots(dateStr) {
   const slots = [];
   for (let hour = 8; hour < 20; hour++) {
     for (const min of [0, 30]) {
-      const slotStart = new Date(`${dateStr}T${String(hour).padStart(2,'0')}:${String(min).padStart(2,'0')}:00Z`);
+      const slotStart = new Date(`${dateStr}T00:00:00`);
+      slotStart.setHours(hour, min, 0, 0);
       slots.push(slotStart);
     }
   }
@@ -97,7 +98,7 @@ export default async function AppointmentsPage({ searchParams }) {
     // instead of vanishing on an exact-timestamp match.
     const start = new Date(appt.scheduled_start);
     const slotStart = new Date(start);
-    slotStart.setUTCMinutes(start.getUTCMinutes() < 30 ? 0 : 30, 0, 0);
+    slotStart.setMinutes(start.getMinutes() < 30 ? 0 : 30, 0, 0);
     const key = slotStart.getTime();
     if (!byAppointmentId.has(key)) byAppointmentId.set(key, []);
     byAppointmentId.get(key).push(appt);
