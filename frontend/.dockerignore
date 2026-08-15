@@ -1,0 +1,34 @@
+# =============================================================================
+# frontend/.dockerignore — applied when the frontend Dockerfile is built with
+# ./frontend as context. Root .dockerignore does NOT apply here.
+# =============================================================================
+
+# --- Secrets ------------------------------------------------------------------
+.env
+.env.*
+!.env.local.example
+
+# --- Dependencies (fresh install in image) -----------------------------------
+node_modules
+
+# --- Build output (regenerated in image) -------------------------------------
+.next
+out
+build
+dist
+
+# --- VCS ---------------------------------------------------------------------
+.git
+.gitignore
+
+# --- Local tooling / editor --------------------------------------------------
+.vscode
+.idea
+*.log
+npm-debug.log*
+.DS_Store
+
+# --- Docs --------------------------------------------------------------------
+README.md
+AGENTS.md
+CLAUDE.md
